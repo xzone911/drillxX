@@ -1,7 +1,7 @@
 pub use equix;
 #[cfg(not(feature = "solana"))]
 use sha3::Digest;
-use packed_simd_2::u16x8; // 引入 SIMD 库
+use packed_simd::u16x8; // 引入 SIMD 库
 
 /// Generates a new drillx hash from a challenge and nonce.
 #[inline(always)]
