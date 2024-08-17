@@ -1,8 +1,29 @@
 #![feature(stdsimd)]
+
 pub use equix;
 #[cfg(not(feature = "solana"))]
 use sha3::Digest;
 use core::arch::x86_64::*;
+
+/// 使用 SIMD 对 16 字节的数组进行排序
+#[inline(always)]
+fn sorted(mut digest: [u8; 16]) -> [u8; 16] {
+    unsafe {
+        let u16_slice: &mut [u16; 8] = core::mem::transmute(&mut digest);
+
+        let mut vec1 = _mm_loadu_si128(u16_slice.as_ptr() as *const __m128i);
+        let mut vec2 = _mm_loadu_si128((u16_slice.as_ptr().add(4)) as *const __m128i);
+
+        let min_vec = _mm_min_epu16(vec1, vec2);
+        let max_vec = _mm_max_epu16(vec1, vec2);
+
+        let sorted_vec = _mm_unpacklo_epi16(min_vec, max_vec);
+
+        _mm_storeu_si128(u16_slice.as_mut_ptr() as *mut __m128i, sorted_vec);
+
+        digest
+    }
+}
 
 /// Generates a new drillx hash from a challenge and nonce.
 #[inline(always)]
@@ -29,7 +50,6 @@ pub fn hash_with_memory(
 }
 
 /// Concatenates a challenge and a nonce into a single buffer.
-/// 优化: 通过传递一个预分配的结果切片，避免每次都分配新的内存。
 #[inline(always)]
 pub fn seed(challenge: &[u8; 32], nonce: &[u8; 8], result: &mut [u8; 40]) {
     result[..32].copy_from_slice(challenge);
@@ -37,7 +57,6 @@ pub fn seed(challenge: &[u8; 32], nonce: &[u8; 8], result: &mut [u8; 40]) {
 }
 
 /// Constructs a keccak digest from a challenge and nonce using equix hashes.
-/// 优化: 将内存重用和无内存的处理逻辑合并到一个函数中，避免代码重复。
 #[inline(always)]
 fn digest(
     challenge: &[u8; 32],
@@ -66,29 +85,7 @@ fn digest(
     Ok(solution.to_bytes())
 }
 
-/// Sorts the provided digest as a list of u16 values.
-/// 使用 core::arch::x86_64 进行 SIMD 优化。
-#[inline(always)]
-fn sorted(mut digest: [u8; 16]) -> [u8; 16] {
-    unsafe {
-        let u16_slice: &mut [u16; 8] = core::mem::transmute(&mut digest);
-
-        // 加载 SIMD 向量
-        let vec = _mm_loadu_si128(u16_slice.as_ptr() as *const __m128i);
-
-        // 使用 SIMD 进行排序操作
-        let sorted_vec = _mm_sort_epi16(vec);
-
-        // 将结果存储回内存
-        _mm_storeu_si128(u16_slice.as_mut_ptr() as *mut __m128i, sorted_vec);
-
-        digest
-    }
-}
-
 /// Returns a keccak hash of the provided digest and nonce.
-/// The digest is sorted prior to hashing to prevent malleability.
-/// Delegates the hash to a syscall if compiled for the solana runtime.
 #[cfg(feature = "solana")]
 #[inline(always)]
 fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
@@ -96,7 +93,6 @@ fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
 }
 
 /// Calculates a hash from the provided digest and nonce.
-/// The digest is sorted prior to hashing to prevent malleability.
 #[cfg(not(feature = "solana"))]
 #[inline(always)]
 fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
