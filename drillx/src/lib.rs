@@ -1,6 +1,7 @@
 pub use equix;
 #[cfg(not(feature = "solana"))]
 use sha3::Digest;
+use packed_simd::u16x8; // 引入 SIMD 库
 
 /// Generates a new drillx hash from a challenge and nonce.
 #[inline(always)]
@@ -65,12 +66,18 @@ fn digest(
 }
 
 /// Sorts the provided digest as a list of u16 values.
-/// 优化: 使用 `unsafe` 和 `transmute` 将 `u8` 数组转换为 `u16` 数组以加速排序。
+/// 优化: 使用 SIMD 和 `transmute` 将 `u8` 数组转换为 `u16` 数组以加速排序。
 #[inline(always)]
 fn sorted(mut digest: [u8; 16]) -> [u8; 16] {
     unsafe {
+        // 将 u8 数组转换为 u16 数组，以便可以一次处理 8 个元素
         let u16_slice: &mut [u16; 8] = core::mem::transmute(&mut digest);
-        u16_slice.sort_unstable();
+
+        // 使用 SIMD 处理 u16 数组的排序
+        let simd = u16x8::from_slice_unaligned(u16_slice);
+        let sorted_simd = simd.sort_unstable();
+        sorted_simd.write_to_slice_unaligned(u16_slice);
+
         digest
     }
 }
