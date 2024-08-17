@@ -1,7 +1,8 @@
+#![feature(stdsimd)]
 pub use equix;
 #[cfg(not(feature = "solana"))]
 use sha3::Digest;
-use core::arch::x86::*; // 引入 SSE2 SIMD 库
+use core::arch::x86_64::*;
 
 /// Generates a new drillx hash from a challenge and nonce.
 #[inline(always)]
