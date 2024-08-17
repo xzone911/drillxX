@@ -14,32 +14,18 @@ use core::arch::aarch64::*; // 适用于 ARM64 平台（如 M1/M2 芯片）
 #[inline(always)]
 fn sorted(mut digest: [u8; 16]) -> [u8; 16] {
     unsafe {
-        let u16_slice: &mut [u16; 8] = core::mem::transmute(&mut digest);
+        let mut vec = vld1q_u16(digest.as_ptr() as *const u16);
 
-        #[cfg(target_arch = "x86_64")]
-        {
-            // 适用于 x86_64 的 SIMD 指令集 (SSE)
-            let vec = _mm_loadu_si128(u16_slice.as_ptr() as *const __m128i);
-            let shuffled_vec = _mm_shuffle_epi32(vec, _MM_SHUFFLE(2, 3, 0, 1));
-            _mm_storeu_si128(u16_slice.as_mut_ptr() as *mut __m128i, shuffled_vec);
+        // Bubble sort 的 SIMD 简化实现
+        for _ in 0..8 {
+            let vec1 = vec;
+            let vec2 = vextq_u16(vec1, vec1, 1); // 向量右移1位
+            let min_vec = vminq_u16(vec1, vec2);
+            let max_vec = vmaxq_u16(vec1, vec2);
+            vec = vcombine_u16(vget_low_u16(min_vec), vget_high_u16(max_vec));
         }
 
-        #[cfg(target_arch = "x86")]
-        {
-            // 适用于 x86 的 SIMD 指令集 (SSE)
-            let vec = _mm_loadu_si128(u16_slice.as_ptr() as *const __m128i);
-            let shuffled_vec = _mm_shuffle_epi32(vec, _MM_SHUFFLE(2, 3, 0, 1));
-            _mm_storeu_si128(u16_slice.as_mut_ptr() as *mut __m128i, shuffled_vec);
-        }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            // 适用于 ARM64 的 SIMD 指令集 (NEON)
-            let vec = vld1q_u16(u16_slice.as_ptr());
-            let sorted_vec = vminq_u16(vec, vec);
-            vst1q_u16(u16_slice.as_mut_ptr(), sorted_vec);
-        }
-
+        vst1q_u16(digest.as_mut_ptr() as *mut u16, vec);
         digest
     }
 }
