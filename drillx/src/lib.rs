@@ -1,7 +1,7 @@
 pub use equix;
 #[cfg(not(feature = "solana"))]
 use sha3::Digest;
-use packed_simd::u16x8; // 引入 SIMD 库
+use core::arch::x86_64::*; // 引入 SSE2 SIMD 库
 
 /// Generates a new drillx hash from a challenge and nonce.
 #[inline(always)]
@@ -66,17 +66,20 @@ fn digest(
 }
 
 /// Sorts the provided digest as a list of u16 values.
-/// 优化: 使用 SIMD 和 `transmute` 将 `u8` 数组转换为 `u16` 数组以加速排序。
+/// 使用 core::arch::x86_64 进行 SIMD 优化。
 #[inline(always)]
 fn sorted(mut digest: [u8; 16]) -> [u8; 16] {
     unsafe {
-        // 将 u8 数组转换为 u16 数组，以便可以一次处理 8 个元素
         let u16_slice: &mut [u16; 8] = core::mem::transmute(&mut digest);
 
-        // 使用 SIMD 处理 u16 数组的排序
-        let simd = u16x8::from_slice_unaligned(u16_slice);
-        let sorted_simd = simd.sort_unstable();
-        sorted_simd.write_to_slice_unaligned(u16_slice);
+        // 加载 SIMD 向量
+        let vec = _mm_loadu_si128(u16_slice.as_ptr() as *const __m128i);
+
+        // 使用 SIMD 进行排序操作
+        let sorted_vec = _mm_sort_epi16(vec);
+
+        // 将结果存储回内存
+        _mm_storeu_si128(u16_slice.as_mut_ptr() as *mut __m128i, sorted_vec);
 
         digest
     }
