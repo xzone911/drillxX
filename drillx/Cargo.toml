@@ -27,7 +27,7 @@ equix = { workspace = true }
 serde = { workspace = true }
 solana-program = { workspace = true, optional = true }
 strum = { workspace = true }
-
+packed_simd_2="0.3.8"
 [dev-dependencies]
 criterion = { workspace = true, default-features = true, features = [
   "html_reports",
