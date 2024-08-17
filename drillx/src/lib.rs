@@ -5,7 +5,7 @@ use sha3::Digest;
 /// Generates a new drillx hash from a challenge and nonce.
 #[inline(always)]
 pub fn hash(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<Hash, DrillxError> {
-    let digest = digest(challenge, nonce)?;
+    let digest = digest(challenge, nonce, None)?;
     Ok(Hash {
         d: digest,
         h: hashv(&digest, nonce),
@@ -19,7 +19,7 @@ pub fn hash_with_memory(
     challenge: &[u8; 32],
     nonce: &[u8; 8],
 ) -> Result<Hash, DrillxError> {
-    let digest = digest_with_memory(memory, challenge, nonce)?;
+    let digest = digest(challenge, nonce, Some(memory))?;
     Ok(Hash {
         d: digest,
         h: hashv(&digest, nonce),
@@ -27,49 +27,45 @@ pub fn hash_with_memory(
 }
 
 /// Concatenates a challenge and a nonce into a single buffer.
+/// 优化: 通过传递一个预分配的结果切片，避免每次都分配新的内存。
 #[inline(always)]
-pub fn seed(challenge: &[u8; 32], nonce: &[u8; 8]) -> [u8; 40] {
-    let mut result = [0; 40];
-    result[00..32].copy_from_slice(challenge);
-    result[32..40].copy_from_slice(nonce);
-    result
+pub fn seed(challenge: &[u8; 32], nonce: &[u8; 8], result: &mut [u8; 40]) {
+    result[..32].copy_from_slice(challenge);
+    result[32..].copy_from_slice(nonce);
 }
 
 /// Constructs a keccak digest from a challenge and nonce using equix hashes.
+/// 优化: 将内存重用和无内存的处理逻辑合并到一个函数中，避免代码重复。
 #[inline(always)]
-fn digest(challenge: &[u8; 32], nonce: &[u8; 8]) -> Result<[u8; 16], DrillxError> {
-    let seed = seed(challenge, nonce);
-    let solutions = equix::solve(&seed).map_err(|_| DrillxError::BadEquix)?;
-    if solutions.is_empty() {
-        return Err(DrillxError::NoSolutions);
-    }
-    // SAFETY: The equix solver guarantees that the first solution is always valid
-    let solution = unsafe { solutions.get_unchecked(0) };
-    Ok(solution.to_bytes())
-}
-
-/// Constructs a keccak digest from a challenge and nonce using equix hashes and pre-allocated memory.
-#[inline(always)]
-fn digest_with_memory(
-    memory: &mut equix::SolverMemory,
+fn digest(
     challenge: &[u8; 32],
     nonce: &[u8; 8],
+    memory: Option<&mut equix::SolverMemory>
 ) -> Result<[u8; 16], DrillxError> {
-    let seed = seed(challenge, nonce);
-    let equix = equix::EquiXBuilder::new()
-        .runtime(equix::RuntimeOption::TryCompile)
-        .build(&seed)
-        .map_err(|_| DrillxError::BadEquix)?;
-    let solutions = equix.solve_with_memory(memory);
+    let mut seed_array = [0; 40];  // 优化: 在栈上分配内存
+    seed(challenge, nonce, &mut seed_array);
+
+    let solutions = match memory {
+        Some(memory) => {
+            let equix = equix::EquiXBuilder::new()
+                .runtime(equix::RuntimeOption::TryCompile)
+                .build(&seed_array)
+                .map_err(|_| DrillxError::BadEquix)?;
+            equix.solve_with_memory(memory)
+        },
+        None => equix::solve(&seed_array).map_err(|_| DrillxError::BadEquix)?
+    };
+
     if solutions.is_empty() {
         return Err(DrillxError::NoSolutions);
     }
-    // SAFETY: The equix solver guarantees that the first solution is always valid
-    let solution = unsafe { solutions.get_unchecked(0) };
+
+    let solution = unsafe { solutions.get_unchecked(0) };  // 优化: 使用不安全代码绕过边界检查以提高性能
     Ok(solution.to_bytes())
 }
 
 /// Sorts the provided digest as a list of u16 values.
+/// 优化: 使用 `unsafe` 和 `transmute` 将 `u8` 数组转换为 `u16` 数组以加速排序。
 #[inline(always)]
 fn sorted(mut digest: [u8; 16]) -> [u8; 16] {
     unsafe {
@@ -99,10 +95,11 @@ fn hashv(digest: &[u8; 16], nonce: &[u8; 8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Returns true if the digest if valid equihash construction from the challenge and nonce.
+/// Returns true if the digest is a valid equihash construction from the challenge and nonce.
 pub fn is_valid_digest(challenge: &[u8; 32], nonce: &[u8; 8], digest: &[u8; 16]) -> bool {
-    let seed = seed(challenge, nonce);
-    equix::verify_bytes(&seed, digest).is_ok()
+    let mut seed_array = [0; 40];
+    seed(challenge, nonce, &mut seed_array);
+    equix::verify_bytes(&seed_array, digest).is_ok()
 }
 
 /// Returns the number of leading zeros on a 32 byte buffer.
